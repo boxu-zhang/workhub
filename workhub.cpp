@@ -14,6 +14,7 @@
 // include workhub library
 #include "workhub_thread.h"
 #include "workhub_error.h"
+#include "workhub_session_mgr.h"
 
 // constants
 #define WH_MAJOR_VERSION                    0
@@ -21,9 +22,72 @@
 #define WH_INVALID_SOCKET                   INVALID_SOCKET
 #define WH_MAX_LISTEN_BACKLOG               10
 
+int epoll_thread_proc( wh_epoll_t * epoll )
+{
+    int errno = 0;
+
+    for ( ;; )
+    {
+        wh_epoll_wait_result wait_result;
+
+        errno = wh_epoll_wait( epoll, &wait_result );
+
+        if ( errno != WH_ERROR_SUCCESS )
+            break;
+
+        wh_session session;
+
+        errno = wh_session_mgr_find( wait_result.socket, &session );
+
+        if ( errno != WH_ERROR_SUCCESS )
+        {
+            errno = wh_session_mgr_new( wait_result.socket, &session );
+
+            if ( errno != WH_ERROR_SUCCESS )
+                continue;
+        }
+
+        // handle request
+        if ( wait_result.flag & WH_EPOLL_READ )
+        {
+            session.on_read( wait_result.socket );
+        }
+        else if ( wait_result.flag & WH_EPOLL_WRITE )
+        {
+            // data has been write to client.
+            session.on_write( wait_result.socket );
+        }
+        else if ( wait_result.flag & WH_EPOLL_CLOSED )
+        {
+            session.on_closed( wait_result.socket );
+
+            _scm.remove_session( &session );
+        }
+    }
+}
+
 int accept_thread_proc( socket sock_server )
 {
+    socket      sock_client = INVALID_SOCKET;
+    sockaddr_in addr;
+    int         addr_length = sizeof( addr );
 
+    // create epoll server
+    wh_epoll_t * epoll = wh_epoll_create();
+    int         epoll_thread = wh_create_thread_poll( (wh_thread_proc_t)&epoll_thread_proc, epoll );
+
+    for ( ;; )
+    {
+        sock_client = accept( sock_server, (sockaddr *)&addr, &addr_length );
+
+        if ( sock_client == WH_INVALID_SOCKET )
+            break; // socket closed
+
+        wh_epoll_add( epoll, socket_client, WH_EPOLL_READ | WH_EPOLL_WRITE );
+    }
+
+    wh_epoll_close( epoll );
+    wh_wait_thread( epoll_thread );
 }
 
 int main( int argc, char * argv[] )
