@@ -3,6 +3,9 @@
 
 struct wh_session
 {
+    int sock_client;
+    const char * script_host;
+    void * script_host_data;
     int (*fn_create)( wh_session * session );
     int (*fn_read)( wh_session * session );
     int (*fn_write)( wh_session * session );
